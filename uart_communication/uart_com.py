@@ -15,14 +15,15 @@ def list_available_ports():
     print()
 
 
-class DACController:
+class SerialController:
     """
-    Controller class for communicating with STM32 MCU to control MCP4728 DAC via UART.
+    Base class for serial communication with STM32 MCU.
+    Provides common serial connection and communication methods.
     """
     
     def __init__(self, port="COM3", baud=115200, auto_connect=True, verbose=True):
         """
-        Initialize the DAC controller.
+        Initialize the serial controller.
         
         Args:
             port (str): Serial port name (e.g., "COM3", "/dev/ttyUSB0")
@@ -113,6 +114,121 @@ class DACController:
             return True
         except:
             return False
+    
+    def wait_for_mcu_response(self, timeout=2.0):
+        """
+        Wait for a response from the MCU (blocking with timeout).
+        
+        Args:
+            timeout (float): Maximum time to wait in seconds
+        
+        Returns:
+            str: Response line if received, None if timeout
+        """
+        start_time = time.time()
+        
+        while (time.time() - start_time) < timeout:
+            if self.ser.in_waiting > 0:
+                try:
+                    line = self.ser.readline().decode().strip()
+                    if line:
+                        return line
+                except (UnicodeDecodeError, serial.SerialException):
+                    pass
+            time.sleep(0.01)  # Small delay to avoid busy waiting
+        
+        return None
+
+    def read_response(self):
+        """
+        Read a response from the MCU (non-blocking).
+        
+        Returns:
+            str: Response line if available, None otherwise
+        """
+        if self.ser.in_waiting > 0:
+            try:
+                line = self.ser.readline().decode().strip()
+                return line if line else None
+            except (UnicodeDecodeError, serial.SerialException):
+                return None
+        return None
+    
+    def check_communication(self, timeout=2.0, verbose=None):
+        """
+        Check if communication with MCU is working by sending a COMM_OK command.
+        
+        Args:
+            timeout (float): Maximum time to wait for response in seconds
+            verbose (bool): Print status messages (defaults to self.verbose)
+        
+        Returns:
+            bool: True if communication is OK, False otherwise
+        """
+        if verbose is None:
+            verbose = self.verbose
+        
+        if verbose:
+            print("Checking communication with MCU...")
+        
+        # Clear any leftover data in input buffer
+        self.ser.reset_input_buffer()
+        
+        # Send COMM_OK command
+        message = "COMM_OK\n"
+        self.ser.write(message.encode())
+        self.ser.flush()  # Ensure data is sent immediately
+        
+        # Wait for response
+        response = self.wait_for_mcu_response(timeout)
+        
+        if response:
+            # Check if response contains "COMM_OK" or "OK"
+            if "COMM_OK" in response.upper() or response.upper() == "OK":
+                if verbose:
+                    print(f"  ✓ Communication OK: {response}")
+                return True
+            else:
+                if verbose:
+                    print(f"  ✗ Unexpected response: {response}")
+                return False
+        else:
+            if verbose:
+                print(f"  ✗ No response from MCU within {timeout}s")
+            return False
+
+    def close(self):
+        """Close the serial connection."""
+        if self.ser and self.ser.is_open:
+            self.ser.close()
+            if self.verbose:
+                print("Serial connection closed.")
+    
+    def __enter__(self):
+        """Context manager entry."""
+        return self
+    
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Context manager exit - automatically close connection."""
+        self.close()
+
+
+class DACController(SerialController):
+    """
+    Controller class for communicating with STM32 MCU to control MCP4728 DAC via UART.
+    """
+    
+    def __init__(self, port="COM3", baud=115200, auto_connect=True, verbose=True):
+        """
+        Initialize the DAC controller.
+        
+        Args:
+            port (str): Serial port name (e.g., "COM3", "/dev/ttyUSB0")
+            baud (int): Baud rate (default: 115200)
+            auto_connect (bool): Automatically connect on initialization
+            verbose (bool): Print connection messages
+        """
+        super().__init__(port, baud, auto_connect, verbose)
     
     def set_dac(self, channel, dac_value, verbose=None, wait_for_response=True, timeout=2.0):
         """
@@ -213,87 +329,6 @@ class DACController:
         
         return True, None
     
-    def read_response(self):
-        """
-        Read a response from the MCU (non-blocking).
-        
-        Returns:
-            str: Response line if available, None otherwise
-        """
-        if self.ser.in_waiting > 0:
-            try:
-                line = self.ser.readline().decode().strip()
-                return line if line else None
-            except (UnicodeDecodeError, serial.SerialException):
-                return None
-        return None
-    
-    def wait_for_mcu_response(self, timeout=2.0):
-        """
-        Wait for a response from the MCU (blocking with timeout).
-        
-        Args:
-            timeout (float): Maximum time to wait in seconds
-        
-        Returns:
-            str: Response line if received, None if timeout
-        """
-        start_time = time.time()
-        
-        while (time.time() - start_time) < timeout:
-            if self.ser.in_waiting > 0:
-                try:
-                    line = self.ser.readline().decode().strip()
-                    if line:
-                        return line
-                except (UnicodeDecodeError, serial.SerialException):
-                    pass
-            time.sleep(0.01)  # Small delay to avoid busy waiting
-        
-        return None
-    
-    def check_communication(self, timeout=2.0, verbose=None):
-        """
-        Check if communication with MCU is working by sending a COMM_OK command.
-        
-        Args:
-            timeout (float): Maximum time to wait for response in seconds
-            verbose (bool): Print status messages (defaults to self.verbose)
-        
-        Returns:
-            bool: True if communication is OK, False otherwise
-        """
-        if verbose is None:
-            verbose = self.verbose
-        
-        if verbose:
-            print("Checking communication with MCU...")
-        
-        # Clear any leftover data in input buffer
-        self.ser.reset_input_buffer()
-        
-        # Send COMM_OK command
-        message = "COMM_OK\n"
-        self.ser.write(message.encode())
-        self.ser.flush()  # Ensure data is sent immediately
-        
-        # Wait for response
-        response = self.wait_for_mcu_response(timeout)
-        
-        if response:
-            # Check if response contains "COMM_OK" or "OK"
-            if "COMM_OK" in response.upper() or response.upper() == "OK":
-                if verbose:
-                    print(f"  ✓ Communication OK: {response}")
-                return True
-            else:
-                if verbose:
-                    print(f"  ✗ Unexpected response: {response}")
-                return False
-        else:
-            if verbose:
-                print(f"  ✗ No response from MCU within {timeout}s")
-            return False
     
     def sweep_channel(self, channel, start_value, end_value, steps, delay=0.1):
         """
@@ -323,7 +358,13 @@ class DACController:
             else:
                 print()
             time.sleep(delay)
-    
+    def sweep_up_and_down(self, channel, start_value, end_value, steps, delay=0.1):
+        """
+        Sweep a DAC channel from start_value to end_value and back to start_value.
+        """
+        self.sweep_channel(channel, start_value, end_value, steps, delay)
+        self.sweep_channel(channel, end_value, start_value, steps, delay)
+        
     def sweep_all_channels(self, start_values, end_values, steps, delay=0.1):
         """
         Sweep all 4 channels simultaneously.
@@ -352,7 +393,7 @@ class DACController:
                   f"Ch2={int(start_values[2] + i*(end_values[2]-start_values[2])/(steps-1))}, "
                   f"Ch3={int(start_values[3] + i*(end_values[3]-start_values[3])/(steps-1))}")
             time.sleep(delay)
-    
+
     def sweep_channels_independent(self, channel_configs, delay=0.1):
         """
         Sweep multiple channels independently with different directions and ranges simultaneously.
@@ -437,21 +478,231 @@ class DACController:
             time.sleep(delay)
         
         print("Sweep complete!")
+
+
+class ADCController(SerialController):
+    """
+    Controller class for reading voltages and currents from ADS1115 ADC via STM32 MCU.
+    """
     
-    def close(self):
-        """Close the serial connection."""
-        if self.ser and self.ser.is_open:
-            self.ser.close()
-            if self.verbose:
-                print("Serial connection closed.")
+    def __init__(self, port="COM3", baud=115200, auto_connect=True, verbose=True, shunt_resistors=[1.0, 1.0, 1.0, 1.0]):
+        """
+        Initialize the ADC controller.
+        
+        Args:
+            port (str): Serial port name (e.g., "COM3", "/dev/ttyUSB0")
+            baud (int): Baud rate (default: 115200)
+            auto_connect (bool): Automatically connect on initialization
+            verbose (bool): Print connection messages
+            shunt_resistors (list): Shunt resistor values in Ohms for each channel [ch0, ch1, ch2, ch3]
+        """
+        super().__init__(port, baud, auto_connect, verbose)
+        self.shunt_resistors = list(shunt_resistors)  # Make a copy
     
-    def __enter__(self):
-        """Context manager entry."""
-        return self
+    def set_shunt_resistor(self, channel, value, verbose=None):
+        """
+        Set shunt resistor value for a specific channel.
+        
+        Args:
+            channel (int): Channel number (0-3)
+            value (float): Shunt resistor value in Ohms
+            verbose (bool): Print confirmation message (defaults to self.verbose)
+        """
+        if verbose is None:
+            verbose = self.verbose
+        
+        if channel < 0 or channel > 3:
+            print(f"Error: Channel must be 0-3, got {channel}")
+            return
+        
+        if value <= 0:
+            print(f"Error: Shunt resistor value must be > 0, got {value}")
+            return
+        
+        self.shunt_resistors[channel] = value
+        if verbose:
+            print(f"Channel {channel} shunt resistor set to {value}Ω")
     
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        """Context manager exit - automatically close connection."""
-        self.close()
+    def test_adc_i2c(self, verbose=None, timeout=2.0):
+        """
+        Test I2C communication with the ADC.
+        
+        Args:
+            verbose (bool): Print confirmation message (defaults to self.verbose)
+            timeout (float): Timeout in seconds when waiting for response
+        
+        Returns:
+            bool: True if I2C communication is OK, False otherwise
+        """
+        if verbose is None:
+            verbose = self.verbose
+        
+        # Clear any leftover data in input buffer
+        self.ser.reset_input_buffer()
+        
+        # Send test command
+        message = "test_adc\n"
+        if verbose:
+            print("Testing ADC I2C communication...")
+        self.ser.write(message.encode())
+        self.ser.flush()
+        
+        # Wait for MCU response
+        response = self.wait_for_mcu_response(timeout)
+        
+        if response:
+            if response.startswith("OK:"):
+                if verbose:
+                    print(f"  ✓ ADC I2C communication OK (config register: {response[3:]})")
+                return True
+            else:
+                if verbose:
+                    print(f"  ✗ ADC I2C communication failed: {response}")
+                return False
+        else:
+            if verbose:
+                print(f"  ✗ No response from MCU within {timeout}s")
+            return False
+    
+    def read_voltage(self, channel, verbose=None, timeout=2.0):
+        """
+        Read voltage from an ADC channel.
+        
+        Args:
+            channel (int): Channel number (0-3)
+            verbose (bool): Print confirmation message (defaults to self.verbose)
+            timeout (float): Timeout in seconds when waiting for response
+        
+        Returns:
+            float: Voltage in Volts, or None if error
+        """
+        if verbose is None:
+            verbose = self.verbose
+        
+        if channel < 0 or channel > 3:
+            print(f"Error: Channel must be 0-3, got {channel}")
+            return None
+        
+        # Clear any leftover data in input buffer
+        self.ser.reset_input_buffer()
+        
+        # Format: "read_adc,channel"
+        message = f"read_adc,{channel}\n"
+        if verbose:
+            print(f"  Sending: read_adc,{channel}")
+        self.ser.write(message.encode())
+        self.ser.flush()
+        
+        # Wait for MCU response
+        response = self.wait_for_mcu_response(timeout)
+        
+        if response:
+            try:
+                # Response might be "voltage,raw_adc" or just "voltage"
+                parts = response.split(',')
+                voltage = float(parts[0])
+                if len(parts) > 1:
+                    raw_adc = int(parts[1])
+                    if verbose:
+                        print(f"  Channel {channel} voltage: {voltage:.4f}V (raw ADC: {raw_adc})")
+                else:
+                    if verbose:
+                        print(f"  Channel {channel} voltage: {voltage:.4f}V (raw response: '{response}')")
+                return voltage
+            except (ValueError, IndexError):
+                if verbose:
+                    print(f"Error: Invalid response from MCU: '{response}'")
+                return None
+        else:
+            if verbose:
+                print(f"Warning: No response from MCU within {timeout}s for channel {channel}")
+            return None
+    
+    def read_current(self, channel, verbose=None, timeout=2.0):
+        """
+        Read current through shunt resistor on an ADC channel.
+        
+        Args:
+            channel (int): Channel number (0-3)
+            verbose (bool): Print confirmation message (defaults to self.verbose)
+            timeout (float): Timeout in seconds when waiting for response
+        
+        Returns:
+            float: Current in Amperes, or None if error
+        """
+        if verbose is None:
+            verbose = self.verbose
+        
+        if channel < 0 or channel > 3:
+            print(f"Error: Channel must be 0-3, got {channel}")
+            return None
+        
+        # Read voltage across shunt resistor
+        voltage = self.read_voltage(channel, verbose=False, timeout=timeout)
+        
+        if voltage is None:
+            return None
+        
+        # Calculate current: I = V / R
+        shunt_r = self.shunt_resistors[channel]
+        current = voltage / shunt_r
+        
+        if verbose:
+            print(f"Channel {channel} current: {current*1000:.3f}mA (V={voltage:.4f}V, R={shunt_r}Ω)")
+        
+        return current
+    
+    def read_all_voltages(self, verbose=None, timeout=2.0):
+        """
+        Read voltages from all ADC channels.
+        
+        Args:
+            verbose (bool): Print confirmation message (defaults to self.verbose)
+            timeout (float): Timeout in seconds when waiting for response
+        
+        Returns:
+            list: List of voltages [ch0, ch1, ch2, ch3] in Volts, None values on error
+        """
+        voltages = []
+        for ch in range(4):
+            v = self.read_voltage(ch, verbose=False, timeout=timeout)
+            voltages.append(v)
+        
+        if verbose:
+            print("All channel voltages:")
+            for ch, v in enumerate(voltages):
+                if v is not None:
+                    print(f"  Channel {ch}: {v:.4f}V")
+                else:
+                    print(f"  Channel {ch}: Error")
+        
+        return voltages
+    
+    def read_all_currents(self, verbose=None, timeout=2.0):
+        """
+        Read currents from all ADC channels.
+        
+        Args:
+            verbose (bool): Print confirmation message (defaults to self.verbose)
+            timeout (float): Timeout in seconds when waiting for response
+        
+        Returns:
+            list: List of currents [ch0, ch1, ch2, ch3] in Amperes, None values on error
+        """
+        currents = []
+        for ch in range(4):
+            i = self.read_current(ch, verbose=False, timeout=timeout)
+            currents.append(i)
+        
+        if verbose:
+            print("All channel currents:")
+            for ch, i in enumerate(currents):
+                if i is not None:
+                    print(f"  Channel {ch}: {i*1000:.3f}mA (R={self.shunt_resistors[ch]}Ω)")
+                else:
+                    print(f"  Channel {ch}: Error")
+        
+        return currents
 
 
 # ============================================================================
@@ -472,52 +723,99 @@ if __name__ == "__main__":
     else:
         print("Warning: Communication check failed. MCU may not be ready.\n")
     
-    print("Available methods:")
-    print("  - dac.check_communication()  # Verify MCU communication")
-    print("  - dac.set_dac(channel, dac_value)")
-    print("  - dac.set_all_channels(dac_value)  # Set all channels to same value")
-    print("  - dac.sweep_channel(channel, start, end, steps, delay)")
-    print("  - dac.sweep_all_channels([start0,start1,start2,start3], [end0,end1,end2,end3], steps, delay)")
-    print("  - dac.sweep_channels_independent([{'channel':0,'start':0,'end':100,'steps':50}, ...])  # Independent sweeps")
-    print("  - dac.read_response()")
-    print("  - dac.close()")
-    print("\nExample usage:")
-    print("  dac.check_communication()  # Check if MCU is responding")
-    print("  dac.sweep_channel(0, 0, 4095, 100, delay=0.05)  # Sweep channel 0 from 0 to 4095 in 100 steps")
-    print("  dac.set_dac(1, 2048)  # Set channel 1 to mid-scale\n")
+    # print("Available methods:")
+    # print("  - dac.check_communication()  # Verify MCU communication")
+    # print("  - dac.set_dac(channel, dac_value)")
+    # print("  - dac.set_all_channels(dac_value)  # Set all channels to same value")
+    # print("  - dac.sweep_channel(channel, start, end, steps, delay)")
+    # print("  - dac.sweep_all_channels([start0,start1,start2,start3], [end0,end1,end2,end3], steps, delay)")
+    # print("  - dac.sweep_channels_independent([{'channel':0,'start':0,'end':100,'steps':50}, ...])  # Independent sweeps")
+    # print("  - dac.read_response()")
+    # print("  - dac.close()")
+    # print("\nExample usage:")
+    # print("  dac.check_communication()  # Check if MCU is responding")
+    # print("  dac.sweep_channel(0, 0, 4095, 100, delay=0.05)  # Sweep channel 0 from 0 to 4095 in 100 steps")
+    # print("  dac.set_dac(1, 2048)  # Set channel 1 to mid-scale\n")
     
     # ============================================================================
     # YOUR CODE GOES HERE
     # ============================================================================
     
+    # Example: Set DAC channel 0 to 1000 and read current from ADC channel 0
     if dac.check_communication():
         print("Communication verified!")
         time.sleep(1)
-        print("Setting channel 1 to 1000")
-        dac.set_dac(1, 1000)
+        
+        # Set DAC channel 0 to 1000
+        print("Setting DAC channel 0 to 1000...")
+        dac.set_dac(0, 1000)
+        time.sleep(0.2)  # Wait for DAC to settle (increased delay)
+        
+        # Close DAC controller to free the serial port
+        dac.close()
+        time.sleep(0.5)  # Brief pause before reopening port
+        
+        # Create ADC controller to read current
+        # Note: Set shunt resistor value (in Ohms) for current calculation
+        # IMPORTANT: Update shunt_resistors to match your hardware!
+        adc = ADCController(port="COM3", baud=115200, 
+                           shunt_resistors=[200.0, 200.0, 200.0, 200.0],  # 200Ω shunt resistors (update to match your hardware)
+                           verbose=True)
+        
+        if adc.check_communication():
+            print("\n" + "="*50)
+            print("ADC Diagnostics:")
+            print("="*50)
+            
+            # First, test I2C communication with ADC
+            print("\nStep 1: Testing ADC I2C communication...")
+            i2c_ok = adc.test_adc_i2c(verbose=True, timeout=3.0)
+            
+            if not i2c_ok:
+                print("\n⚠️  WARNING: ADC I2C communication failed!")
+                print("   Check:")
+                print("   - I2C2 connections (SDA=PB10, SCL=PB11)")
+                print("   - ADS1115 power (VDD, GND)")
+                print("   - ADS1115 I2C address (ADDR pin to GND = 0x48)")
+                print("   - Pull-up resistors on I2C lines (typically 4.7kΩ)")
+                adc.close()
+                exit()
+            
+            # Test reading voltage from all channels
+            print("\nStep 2: Testing ADC voltage readings on all channels...")
+            for ch in range(4):
+                voltage = adc.read_voltage(ch, verbose=True, timeout=3.0)
+                if voltage is not None:
+                    print(f"  Channel {ch}: {voltage:.4f}V")
+                else:
+                    print(f"  Channel {ch}: ERROR - No response")
+            
+            # Now read current from ADC channel 0
+            print("\n" + "="*50)
+            print("Reading current from ADC channel 0...")
+            print("="*50)
+            current = adc.read_current(0, verbose=True, timeout=3.0)
+            
+            if current is not None:
+                print(f"\n✓ Success! Current: {current*1000:.3f}mA")
+                print(f"  (Voltage: {adc.read_voltage(0, verbose=False, timeout=2.0):.4f}V, "
+                      f"Shunt R: {adc.shunt_resistors[0]}Ω)")
+            else:
+                print("\n✗ Failed to read current")
+                print("\nTroubleshooting tips:")
+                print("  1. Check I2C connections for ADS1115 (SDA, SCL, VDD, GND)")
+                print("  2. Verify ADS1115 I2C address (default: 0x48)")
+                print("  3. Check if shunt resistor is connected between ADC channel and GND")
+                print("  4. Verify DAC output is connected to the circuit")
+                print("  5. Check if ADC is initialized in STM32 code")
+            
+            adc.close()
+        else:
+            print("ADC communication check failed.")
+            adc.close()
     else:
         print("Communication check failed. MCU may not be ready.")
         dac.close()
         exit()
-    
-    
-    # Example 1: Simple sweep on channel 0
-    # dac.sweep_channel(0, 0, 4095, 50, delay=0.1)
-    
-    # Example 2: Sweep multiple channels
-    # dac.sweep_channel(0, 0, 2048, 20, delay=0.1)
-    # dac.sweep_channel(1, 2048, 4095, 20, delay=0.1)
-    
-    # Example 3: Sweep all channels simultaneously
-    # dac.sweep_all_channels([0, 0, 0, 0], [4095, 2048, 1024, 512], 50, delay=0.1)
-    
-    # Example 4: Custom algorithm
-    # for i in range(10):
-    #     dac.set_dac(0, i * 400)
-    #     dac.set_dac(1, 4095 - i * 400)
-    #     time.sleep(0.2)
-    
-    # ============================================================================
-    # Clean up (optional - connection will close when script exits)
-    # ============================================================================
-    # dac.close()
+
+

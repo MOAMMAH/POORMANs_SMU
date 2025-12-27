@@ -9,8 +9,17 @@ class KeysightOPM:
         self.inst = self.rm.open_resource(visa_addr)
         self.inst.read_termination = "\n"
         self.inst.write_termination = "\n"
+        # Increase timeout to handle slow channels (default is often 5 seconds)
+        self.inst.timeout = 10000  # 10 seconds in milliseconds
         self.id = self.query("*IDN?").strip()
-        self.max_chan = 4 if "MY61C00155" in self.id else 2
+        
+        # Detect number of channels based on device model
+        if "N7745" in self.id or "N7744" in self.id:
+            self.max_chan = 8  # N7745C/N7744C are 8-channel
+        elif "MY61C00155" in self.id:
+            self.max_chan = 4
+        else:
+            self.max_chan = 2  # Default for most 2-channel models
 
     def write(self, cmd: str):
         self.inst.write(cmd)
@@ -37,7 +46,7 @@ class KeysightOPM:
             unit_code = int(self.query(f"sens{chan}:pow:unit?"))
             return "dBm" if unit_code == 0 else "Watt"
         except:
-            return "Unknown"
+            return "dBm"  # Default assumption
 
     def set_wavelength(self, chan: int, wavel: float):
         if not self._check_channel(chan): return
@@ -77,12 +86,25 @@ class KeysightOPM:
         except:
             return "Error"
 
-    def get_power(self, chan: int) -> float | None:
-        if not self._check_channel(chan): return None
-        try:
-            return float(self.query(f"read{chan}:pow?"))
-        except:
+    def get_power(self, chan: int, retries: int = 2) -> float | None:
+        """Measure the optical power on a specific channel in the current unit."""
+        if not self._check_channel(chan):
             return None
+        
+        # Retry logic for channels that timeout
+        for attempt in range(retries + 1):
+            try:
+                # Use standard command format that works across Keysight models
+                # Format: read{chan}:pow? (matches working implementation)
+                p = float(self.query(f"read{chan}:pow?"))
+                return p
+            except:
+                # If it's the last attempt, return None
+                if attempt == retries:
+                    return None
+                # Otherwise, wait a bit and retry
+                sleep(0.1)
+        return None
 
     def get_power_mw(self, chan: int) -> float | None:
         if not self._check_channel(chan): return None
@@ -96,9 +118,16 @@ class KeysightOPM:
         return val * 1000 if val is not None else None
 
     def get_power_all(self) -> list[float]:
-        try:
-            self.write("read:pow:all?")
-            raw = self.read_binary(datatype="f")
-            return raw[:self.max_chan]
-        except:
-            return [float("nan")] * self.max_chan
+        """
+        Measure the optical power on all available channels in their current units.
+        Uses individual channel reads for reliability (binary read can timeout).
+        """
+        # Use individual channel reads - more reliable than binary read
+        # Binary read can timeout on some channels
+        results = []
+        for ch in range(1, self.max_chan + 1):
+            power = self.get_power(ch, retries=2)
+            results.append(power if power is not None else float("nan"))
+            # Small delay between channels to avoid overwhelming the instrument
+            sleep(0.05)
+        return results

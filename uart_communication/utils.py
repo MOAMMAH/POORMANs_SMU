@@ -26,21 +26,21 @@ class Electrical:
         if shunt_resistors is None:
             shunt_resistors = [1.0, 1.0, 1.0, 1.0]
         self.shunt_resistors = shunt_resistors
-    
+
     def set_shunt_resistors(self, shunt_resistors: List[float]):
         """Set shunt resistor values for each channel."""
         self.shunt_resistors = shunt_resistors
-    
+
     def get_shunt_resistors(self) -> List[float]:
         """Get shunt resistor values."""
         return self.shunt_resistors
-    
+
     def calculate_resistance(self, voltage: float, current: float) -> float:
         """Calculate resistance from voltage and current."""
         if current == 0:
             return float('inf')
         return voltage / current
-    
+
     def calculate_power(self, voltage: float, current: float) -> float:
         """Calculate electrical power (P = V × I)."""
         return voltage * current
@@ -431,3 +431,4 @@ def quick_iv_sweep(dac_controller, adc_controller, dac_channel: int, adc_channel
         'currents': currents,
         **analysis
     }
+        

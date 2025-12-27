@@ -282,6 +282,53 @@ class DACController(SerialController):
         
         return True, None
     
+    def set_voltage(self, channel, voltage, vref=5.0, verbose=None, wait_for_response=True, timeout=2.0):
+        """
+        Set DAC output voltage for a specific channel by converting voltage to DAC code.
+        
+        Args:
+            channel (int): Channel number (0-3)
+            voltage (float): Desired output voltage in Volts (0 to vref)
+            vref (float): Reference voltage in Volts (default: 5.0V for VDD)
+            verbose (bool): Print confirmation message (defaults to self.verbose)
+            wait_for_response (bool): Wait for MCU response/acknowledgment
+            timeout (float): Timeout in seconds when waiting for response
+        
+        Returns:
+            tuple: (success: bool, response: str) - success indicates if command was sent,
+                   response contains MCU acknowledgment or None if timeout/error
+        """
+        if verbose is None:
+            verbose = self.verbose
+        
+        # Validate inputs
+        if channel < 0 or channel > 3:
+            print(f"Error: Channel must be 0-3, got {channel}")
+            return False, None
+        
+        if voltage < 0 or voltage > vref:
+            print(f"Error: Voltage must be 0-{vref}V, got {voltage}V")
+            return False, None
+        
+        if vref <= 0:
+            print(f"Error: Reference voltage must be > 0, got {vref}V")
+            return False, None
+        
+        # Convert voltage to DAC code: dac_value = (voltage / vref) * 4095
+        dac_value = int((voltage / vref) * 4095)
+        
+        # Clamp to valid range (0-4095)
+        if dac_value < 0:
+            dac_value = 0
+        elif dac_value > 4095:
+            dac_value = 4095
+        
+        if verbose:
+            print(f"Setting channel {channel} to {voltage:.4f}V (DAC code: {dac_value})")
+        
+        # Call set_dac with the converted value
+        return self.set_dac(channel, dac_value, verbose=False, wait_for_response=wait_for_response, timeout=timeout)
+    
     def set_all_channels(self, dac_value, verbose=None, wait_for_response=True, timeout=2.0):
         """
         Set all DAC channels to the same value and wait for MCU acknowledgment.
